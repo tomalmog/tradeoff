@@ -1,13 +1,12 @@
 /**
  * SnapTrade Integration Library
  * 
- * Provides seamless brokerage connection and portfolio syncing via SnapTrade API.
+ * Uses the official SnapTrade TypeScript SDK for reliable API communication.
  * Documentation: https://docs.snaptrade.com/
  */
 
-import crypto from 'crypto';
+import { Snaptrade } from 'snaptrade-typescript-sdk';
 import type {
-  SnapTradeConfig,
   SnapTradeUser,
   SnapTradeConnection,
   SnapTradeAccount,
@@ -20,27 +19,29 @@ import type {
 } from './types/brokerage';
 
 // ============================================================================
-// Configuration
+// SDK Initialization
 // ============================================================================
 
-const SNAPTRADE_BASE_URL = 'https://api.snaptrade.com/api/v1';
+let snaptradeClient: Snaptrade | null = null;
 
-function getConfig(): SnapTradeConfig {
-  const clientId = process.env.SNAPTRADE_CLIENT_ID;
-  const consumerKey = process.env.SNAPTRADE_CONSUMER_KEY;
+function getClient(): Snaptrade {
+  if (!snaptradeClient) {
+    const clientId = process.env.SNAPTRADE_CLIENT_ID;
+    const consumerKey = process.env.SNAPTRADE_CONSUMER_KEY;
 
-  if (!clientId || !consumerKey) {
-    throw new SnapTradeError(
-      'INVALID_CREDENTIALS',
-      'SnapTrade credentials not configured. Set SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY environment variables.'
-    );
+    if (!clientId || !consumerKey) {
+      throw new SnapTradeError(
+        'INVALID_CREDENTIALS',
+        'SnapTrade credentials not configured. Set SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY environment variables.'
+      );
+    }
+
+    snaptradeClient = new Snaptrade({
+      clientId,
+      consumerKey,
+    });
   }
-
-  return {
-    clientId,
-    consumerKey,
-    baseUrl: SNAPTRADE_BASE_URL,
-  };
+  return snaptradeClient;
 }
 
 // ============================================================================
@@ -59,93 +60,23 @@ export class SnapTradeError extends Error implements BrokerageError {
   }
 }
 
-// ============================================================================
-// Authentication Helpers
-// ============================================================================
-
-/**
- * Generate HMAC signature for SnapTrade API requests
- */
-function generateSignature(
-  consumerKey: string,
-  requestPath: string,
-  timestamp: string,
-  content?: string
-): string {
-  const signatureContent = `${requestPath}${timestamp}${content || ''}`;
-  return crypto
-    .createHmac('sha256', consumerKey)
-    .update(signatureContent)
-    .digest('base64');
-}
-
-/**
- * Make authenticated request to SnapTrade API
- */
-async function snapTradeRequest<T>(
-  method: 'GET' | 'POST' | 'DELETE',
-  path: string,
-  body?: Record<string, unknown>,
-  userCredentials?: { userId: string; userSecret: string }
-): Promise<T> {
-  const config = getConfig();
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const url = `${config.baseUrl}${path}`;
+function handleError(error: unknown): never {
+  console.error('[SnapTrade] Error:', error);
   
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Timestamp': timestamp,
-    'clientId': config.clientId,
-  };
-
-  // Add user credentials if provided
-  if (userCredentials) {
-    headers['userId'] = userCredentials.userId;
-    headers['userSecret'] = userCredentials.userSecret;
+  if (error instanceof SnapTradeError) {
+    throw error;
   }
-
-  // Generate signature
-  const bodyStr = body ? JSON.stringify(body) : '';
-  headers['Signature'] = generateSignature(config.consumerKey, path, timestamp, bodyStr);
-
-  try {
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body ? bodyStr : undefined,
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new SnapTradeError(
-        mapHttpStatusToErrorCode(response.status),
-        errorData.message || `SnapTrade API error: ${response.status}`,
-        errorData
-      );
-    }
-
-    return response.json();
-  } catch (error) {
-    if (error instanceof SnapTradeError) throw error;
-    throw new SnapTradeError(
-      'UNKNOWN_ERROR',
-      `Failed to communicate with SnapTrade: ${(error as Error).message}`
-    );
-  }
-}
-
-function mapHttpStatusToErrorCode(status: number): BrokerageErrorCode {
-  switch (status) {
-    case 401:
-    case 403:
-      return 'INVALID_CREDENTIALS';
-    case 429:
-      return 'RATE_LIMITED';
-    case 503:
-      return 'BROKER_UNAVAILABLE';
-    default:
-      return 'UNKNOWN_ERROR';
-  }
+  
+  const err = error as { status?: number; message?: string; response?: { data?: unknown } };
+  const status = err.status || 500;
+  const message = err.message || 'Unknown SnapTrade error';
+  
+  let code: BrokerageErrorCode = 'UNKNOWN_ERROR';
+  if (status === 401 || status === 403) code = 'INVALID_CREDENTIALS';
+  else if (status === 429) code = 'RATE_LIMITED';
+  else if (status === 503) code = 'BROKER_UNAVAILABLE';
+  
+  throw new SnapTradeError(code, message, { originalError: err.response?.data || err });
 }
 
 // ============================================================================
@@ -154,31 +85,36 @@ function mapHttpStatusToErrorCode(status: number): BrokerageErrorCode {
 
 /**
  * Register a new user with SnapTrade
- * This creates a user ID and secret that will be used for all subsequent requests
  */
 export async function registerUser(externalUserId: string): Promise<SnapTradeUser> {
-  const response = await snapTradeRequest<{
-    userId: string;
-    userSecret: string;
-  }>('POST', '/snapTrade/registerUser', {
-    userId: externalUserId,
-  });
-
-  return {
-    userId: response.userId,
-    userSecret: response.userSecret,
-    createdAt: new Date(),
-  };
+  try {
+    const client = getClient();
+    const response = await client.authentication.registerSnapTradeUser({
+      userId: externalUserId,
+    });
+    
+    console.log('[SnapTrade] User registered:', response.data);
+    
+    return {
+      userId: response.data.userId || externalUserId,
+      userSecret: response.data.userSecret || '',
+      createdAt: new Date(),
+    };
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 /**
  * Delete a user and all their connections from SnapTrade
  */
 export async function deleteUser(userId: string, userSecret: string): Promise<void> {
-  await snapTradeRequest('DELETE', `/snapTrade/deleteUser`, undefined, {
-    userId,
-    userSecret,
-  });
+  try {
+    const client = getClient();
+    await client.authentication.deleteSnapTradeUser({ userId, userSecret });
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 // ============================================================================
@@ -189,28 +125,32 @@ export async function deleteUser(userId: string, userSecret: string): Promise<vo
  * Get list of supported brokerages
  */
 export async function getSupportedBrokerages(): Promise<SnapTradeBrokerage[]> {
-  const response = await snapTradeRequest<Array<{
-    id: string;
-    name: string;
-    slug: string;
-    url?: string;
-    logo?: string;
-    features?: string[];
-  }>>('GET', '/brokerages');
-
-  return response.map(b => ({
-    id: b.id,
-    name: b.name,
-    slug: b.slug,
-    logoUrl: b.logo,
-    supportsHoldings: b.features?.includes('holdings') ?? true,
-    supportsOrders: b.features?.includes('orders') ?? false,
-  }));
+  try {
+    const client = getClient();
+    const response = await client.referenceData.listBrokerages();
+    
+    return (response.data || []).map((b: {
+      id?: string;
+      name?: string;
+      slug?: string;
+      aws_s3_logo_url?: string;
+      has_reporting?: boolean;
+      allows_trading?: boolean;
+    }) => ({
+      id: b.id || '',
+      name: b.name || '',
+      slug: b.slug || '',
+      logoUrl: b.aws_s3_logo_url,
+      supportsHoldings: b.has_reporting ?? true,
+      supportsOrders: b.allows_trading ?? false,
+    }));
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 /**
  * Generate connection link for user to connect their brokerage
- * Returns a URL that the user should be redirected to
  */
 export async function getConnectionLink(
   userId: string,
@@ -221,25 +161,26 @@ export async function getConnectionLink(
     connectionType?: 'read' | 'trade';
   }
 ): Promise<ConnectBrokerageResponse> {
-  const response = await snapTradeRequest<{
-    redirectURI: string;
-    sessionId: string;
-  }>(
-    'POST',
-    '/snapTrade/login',
-    {
+  try {
+    const client = getClient();
+    const response = await client.authentication.loginSnapTradeUser({
+      userId,
+      userSecret,
       broker: options?.brokerageId,
       immediateRedirect: true,
       customRedirect: options?.redirectUri,
       connectionType: options?.connectionType || 'read',
-    },
-    { userId, userSecret }
-  );
-
-  return {
-    redirectUrl: response.redirectURI,
-    authorizationId: response.sessionId,
-  };
+    });
+    
+    console.log('[SnapTrade] Login link generated:', response.data);
+    
+    return {
+      redirectUrl: response.data.redirectURI || '',
+      authorizationId: response.data.sessionId || '',
+    };
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 /**
@@ -249,28 +190,29 @@ export async function getUserConnections(
   userId: string,
   userSecret: string
 ): Promise<SnapTradeConnection[]> {
-  const response = await snapTradeRequest<Array<{
-    id: string;
-    brokerage: {
-      name: string;
-      slug: string;
-    };
-    name: string;
-    disabled: boolean;
-    disabled_date?: string;
-    meta?: {
-      last_synced?: string;
-    };
-  }>>('GET', '/authorizations', undefined, { userId, userSecret });
-
-  return response.map(conn => ({
-    id: conn.id,
-    brokerName: conn.brokerage.name,
-    brokerSlug: conn.brokerage.slug,
-    status: conn.disabled ? 'disconnected' : 'connected',
-    lastSynced: conn.meta?.last_synced ? new Date(conn.meta.last_synced) : null,
-    accounts: [], // Will be populated separately
-  }));
+  try {
+    const client = getClient();
+    const response = await client.connections.listBrokerageAuthorizations({
+      userId,
+      userSecret,
+    });
+    
+    return (response.data || []).map((conn: {
+      id?: string;
+      brokerage?: { name?: string; slug?: string };
+      disabled?: boolean;
+      meta?: { last_synced?: string };
+    }) => ({
+      id: conn.id || '',
+      brokerName: conn.brokerage?.name || 'Unknown',
+      brokerSlug: conn.brokerage?.slug || '',
+      status: conn.disabled ? 'disconnected' : 'connected',
+      lastSynced: conn.meta?.last_synced ? new Date(conn.meta.last_synced) : null,
+      accounts: [],
+    }));
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 /**
@@ -281,12 +223,16 @@ export async function disconnectBrokerage(
   userSecret: string,
   authorizationId: string
 ): Promise<void> {
-  await snapTradeRequest(
-    'DELETE',
-    `/authorizations/${authorizationId}`,
-    undefined,
-    { userId, userSecret }
-  );
+  try {
+    const client = getClient();
+    await client.connections.removeBrokerageAuthorization({
+      userId,
+      userSecret,
+      authorizationId,
+    });
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 // ============================================================================
@@ -300,29 +246,34 @@ export async function getAccounts(
   userId: string,
   userSecret: string
 ): Promise<SnapTradeAccount[]> {
-  const response = await snapTradeRequest<Array<{
-    id: string;
-    name: string;
-    number: string;
-    sync_status: {
-      holdings: { last_synced: string };
-    };
-    meta: {
-      type?: string;
-    };
-    cash?: number;
-    currency?: { code: string };
-  }>>('GET', '/accounts', undefined, { userId, userSecret });
-
-  return response.map(acc => ({
-    id: acc.id,
-    name: acc.name,
-    number: acc.number,
-    type: mapAccountType(acc.meta?.type),
-    currency: acc.currency?.code || 'USD',
-    balance: acc.cash || 0,
-    holdings: [], // Will be populated separately
-  }));
+  try {
+    const client = getClient();
+    const response = await client.accountInformation.listUserAccounts({
+      userId,
+      userSecret,
+    });
+    
+    console.log('[SnapTrade] Accounts fetched:', response.data?.length || 0);
+    
+    return (response.data || []).map((acc: {
+      id?: string;
+      name?: string;
+      number?: string;
+      meta?: { type?: string };
+      cash?: number;
+      currency?: { code?: string };
+    }) => ({
+      id: acc.id || '',
+      name: acc.name || 'Account',
+      number: acc.number || '',
+      type: mapAccountType(acc.meta?.type),
+      currency: acc.currency?.code || 'USD',
+      balance: acc.cash || 0,
+      holdings: [],
+    }));
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 function mapAccountType(type?: string): SnapTradeAccount['type'] {
@@ -346,40 +297,50 @@ export async function getAccountHoldings(
   userSecret: string,
   accountId: string
 ): Promise<SnapTradePosition[]> {
-  const response = await snapTradeRequest<{
-    account: { id: string };
-    positions: Array<{
-      symbol: {
-        symbol: string;
-        description?: string;
-        currency?: { code: string };
-      };
-      units: number;
-      price: number;
+  try {
+    const client = getClient();
+    const response = await client.accountInformation.getUserAccountPositions({
+      userId,
+      userSecret,
+      accountId,
+    });
+    
+    console.log('[SnapTrade] Holdings fetched for account:', accountId, response.data?.length || 0);
+    
+    return (response.data || []).map((pos: {
+      symbol?: { symbol?: string; raw_symbol?: string; description?: string; currency?: { code?: string } };
+      units?: number;
+      price?: number;
       open_pnl?: number;
       fractional_units?: number;
       average_purchase_price?: number;
-    }>;
-    total_value: number;
-  }>('GET', `/accounts/${accountId}/holdings`, undefined, { userId, userSecret });
-
-  const totalValue = response.total_value || 1;
-
-  return response.positions.map(pos => ({
-    symbol: pos.symbol.symbol,
-    description: pos.symbol.description || pos.symbol.symbol,
-    units: pos.units + (pos.fractional_units || 0),
-    price: pos.price,
-    marketValue: (pos.units + (pos.fractional_units || 0)) * pos.price,
-    currency: pos.symbol.currency?.code || 'USD',
-    averagePurchasePrice: pos.average_purchase_price,
-    percentOfPortfolio: ((pos.units * pos.price) / totalValue) * 100,
-  }));
+    }) => {
+      const units = (pos.units || 0) + (pos.fractional_units || 0);
+      const price = pos.price || 0;
+      // Extract the actual ticker symbol from the nested object
+      const ticker = pos.symbol?.symbol || pos.symbol?.raw_symbol || 'UNKNOWN';
+      const currency = pos.symbol?.currency?.code || 'USD';
+      
+      console.log('[SnapTrade] Parsed position:', ticker, units, 'shares @', price, currency);
+      
+      return {
+        symbol: ticker,
+        description: pos.symbol?.description || ticker,
+        units,
+        price,
+        marketValue: units * price,
+        currency,
+        averagePurchasePrice: pos.average_purchase_price,
+        percentOfPortfolio: 0,
+      };
+    });
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 /**
  * Get all holdings across all accounts for a user
- * This is the main method to use for syncing portfolio
  */
 export async function getAllHoldings(
   userId: string,
@@ -406,7 +367,7 @@ export async function getAllHoldings(
   const allPositions = await Promise.all(holdingsPromises);
   const flatPositions = allPositions.flat();
 
-  // Aggregate positions by symbol (combine holdings across accounts)
+  // Aggregate positions by symbol
   const aggregatedHoldings = aggregateHoldings(flatPositions);
 
   return {
@@ -416,18 +377,58 @@ export async function getAllHoldings(
 }
 
 /**
- * Aggregate holdings by symbol, combining positions from multiple accounts
+ * Extract ticker string from symbol (handles both string and object formats)
+ */
+function extractTicker(symbol: unknown): string | null {
+  if (typeof symbol === 'string') {
+    return symbol;
+  }
+  if (symbol && typeof symbol === 'object') {
+    const symObj = symbol as { symbol?: string; raw_symbol?: string };
+    return symObj.symbol || symObj.raw_symbol || null;
+  }
+  return null;
+}
+
+/**
+ * Extract currency from position (handles nested object)
+ */
+function extractCurrency(pos: SnapTradePosition): string {
+  if (typeof pos.currency === 'string') {
+    return pos.currency;
+  }
+  // Currency might be nested in symbol object
+  const symbol = pos.symbol as unknown;
+  if (symbol && typeof symbol === 'object') {
+    const symObj = symbol as { currency?: { code?: string } };
+    return symObj.currency?.code || 'USD';
+  }
+  return 'USD';
+}
+
+/**
+ * Aggregate holdings by symbol
  */
 function aggregateHoldings(positions: SnapTradePosition[]): PortfolioHolding[] {
   const holdingsMap = new Map<string, PortfolioHolding>();
 
-  for (const pos of positions) {
-    // Skip non-equity positions (options, bonds, etc.)
-    if (!isEquitySymbol(pos.symbol)) continue;
+  console.log('[SnapTrade] Aggregating positions:', positions.length);
 
-    const existing = holdingsMap.get(pos.symbol);
+  for (const pos of positions) {
+    // Extract ticker - handle both string and object formats
+    const ticker = extractTicker(pos.symbol);
+    
+    if (!ticker) {
+      console.log('[SnapTrade] Skipping position with no ticker');
+      continue;
+    }
+
+    const currency = extractCurrency(pos);
+    
+    console.log('[SnapTrade] Adding position:', ticker, pos.units, pos.marketValue, currency);
+
+    const existing = holdingsMap.get(ticker);
     if (existing) {
-      // Combine holdings
       const totalUnits = existing.shares + pos.units;
       const totalValue = (existing.currentValue || 0) + pos.marketValue;
       const weightedAvgPrice = existing.averagePrice && pos.averagePurchasePrice
@@ -438,30 +439,19 @@ function aggregateHoldings(positions: SnapTradePosition[]): PortfolioHolding[] {
       existing.currentValue = totalValue;
       existing.averagePrice = weightedAvgPrice;
     } else {
-      holdingsMap.set(pos.symbol, {
-        ticker: pos.symbol,
+      holdingsMap.set(ticker, {
+        ticker: ticker,
         shares: pos.units,
         currentValue: pos.marketValue,
         averagePrice: pos.averagePurchasePrice,
-        currency: pos.currency,
+        currency: currency,
       });
     }
   }
 
-  return Array.from(holdingsMap.values());
-}
-
-/**
- * Check if a symbol is a standard equity (stock/ETF)
- * Filters out options, futures, bonds, etc.
- */
-function isEquitySymbol(symbol: string): boolean {
-  // Skip if symbol contains option indicators
-  if (/\d{6}[CP]\d+/.test(symbol)) return false; // Option format
-  if (symbol.includes(' ')) return false; // Complex instruments
-  if (symbol.length > 5 && !symbol.includes('.')) return false; // Likely not a standard ticker
-  
-  return true;
+  const result = Array.from(holdingsMap.values());
+  console.log('[SnapTrade] Aggregated holdings:', result.length, result.map(h => h.ticker));
+  return result;
 }
 
 // ============================================================================
@@ -469,22 +459,41 @@ function isEquitySymbol(symbol: string): boolean {
 // ============================================================================
 
 /**
- * Force a refresh of holdings data from the brokerage
+ * Force a refresh of holdings data
  */
 export async function refreshHoldings(
   userId: string,
   userSecret: string,
   accountId?: string
 ): Promise<void> {
-  const path = accountId 
-    ? `/accounts/${accountId}/holdings/refresh`
-    : '/holdings/refresh';
-  
-  await snapTradeRequest('POST', path, undefined, { userId, userSecret });
+  try {
+    const client = getClient();
+    if (accountId) {
+      await client.accountInformation.getUserAccountPositions({
+        userId,
+        userSecret,
+        accountId,
+      });
+    } else {
+      // Refresh all accounts
+      const accounts = await getAccounts(userId, userSecret);
+      await Promise.all(
+        accounts.map((acc) =>
+          client.accountInformation.getUserAccountPositions({
+            userId,
+            userSecret,
+            accountId: acc.id,
+          })
+        )
+      );
+    }
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 /**
- * Check if credentials are valid and connection is active
+ * Check if credentials are valid
  */
 export async function validateConnection(
   userId: string,

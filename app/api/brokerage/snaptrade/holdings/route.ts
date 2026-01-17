@@ -56,9 +56,31 @@ export async function GET(request: NextRequest) {
     // Fetch all holdings across all accounts
     const { holdings, accounts } = await getAllHoldings(userId, userSecret);
 
+    // Clean up holdings to ensure only primitive values (no nested objects)
+    const cleanHoldings = holdings.map(h => ({
+      ticker: String(h.ticker || 'UNKNOWN'),
+      shares: Number(h.shares) || 0,
+      currentValue: Number(h.currentValue) || 0,
+      averagePrice: h.averagePrice ? Number(h.averagePrice) : undefined,
+      currency: String(h.currency || 'USD'),
+    }));
+
+    // Clean up accounts to remove complex nested objects
+    const cleanAccounts = accounts.map(acc => ({
+      id: String(acc.id),
+      name: String(acc.name),
+      number: String(acc.number),
+      type: String(acc.type),
+      currency: String(acc.currency),
+      balance: Number(acc.balance) || 0,
+      holdingsCount: acc.holdings?.length || 0,
+    }));
+
+    console.log('[API] Returning holdings:', cleanHoldings);
+
     return NextResponse.json({
-      holdings,
-      accounts,
+      holdings: cleanHoldings,
+      accounts: cleanAccounts,
       lastSynced: new Date().toISOString(),
     });
   } catch (error) {

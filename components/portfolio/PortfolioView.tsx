@@ -109,6 +109,7 @@ export function PortfolioView({
           <PortfolioInput
             portfolio={portfolio}
             setPortfolio={setPortfolio}
+            setStockInfo={setStockInfo}
           />
         </div>
       </div>
@@ -248,6 +249,7 @@ export function PortfolioView({
         <PortfolioInput
           portfolio={portfolio}
           setPortfolio={setPortfolio}
+          setStockInfo={setStockInfo}
           compact
         />
       </div>

@@ -3,11 +3,12 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { PortfolioItem } from "@/app/page";
+import type { PortfolioItem, StockInfo } from "@/app/page";
 
 interface PortfolioInputProps {
   portfolio: PortfolioItem[];
   setPortfolio: React.Dispatch<React.SetStateAction<PortfolioItem[]>>;
+  setStockInfo?: React.Dispatch<React.SetStateAction<Record<string, StockInfo>>>;
   compact?: boolean;
 }
 
@@ -45,6 +46,36 @@ const SAMPLE_PORTFOLIO = [
   { ticker: "SPY", shares: 3 },
   { ticker: "TMUS", shares: 5 },
 ];
+
+// Placeholder stock info with realistic prices and sectors (displayed immediately while real data loads)
+const SAMPLE_STOCK_INFO: Record<string, { ticker: string; name: string; price: number; sector: string }> = {
+  AAPL: { ticker: "AAPL", name: "Apple Inc.", price: 255.50, sector: "Technology" },
+  AGCO: { ticker: "AGCO", name: "AGCO Corporation", price: 111.35, sector: "Industrials" },
+  BA: { ticker: "BA", name: "Boeing Company (The)", price: 247.68, sector: "Industrials" },
+  BG: { ticker: "BG", name: "Bunge Limited", price: 107.81, sector: "Consumer Defensive" },
+  CALM: { ticker: "CALM", name: "Cal-Maine Foods, Inc.", price: 77.92, sector: "Consumer Defensive" },
+  CAT: { ticker: "CAT", name: "Caterpillar, Inc.", price: 646.89, sector: "Industrials" },
+  CSCO: { ticker: "CSCO", name: "Cisco Systems, Inc.", price: 75.19, sector: "Technology" },
+  CVX: { ticker: "CVX", name: "Chevron Corporation", price: 166.26, sector: "Energy" },
+  DDOG: { ticker: "DDOG", name: "Datadog, Inc.", price: 119.02, sector: "Technology" },
+  DE: { ticker: "DE", name: "Deere & Company", price: 514.40, sector: "Industrials" },
+  GRWG: { ticker: "GRWG", name: "GrowGeneration Corp.", price: 1.49, sector: "Consumer Cyclical" },
+  HUM: { ticker: "HUM", name: "Humana Inc.", price: 273.28, sector: "Healthcare" },
+  IBKR: { ticker: "IBKR", name: "Interactive Brokers Group, Inc.", price: 73.36, sector: "Financial Services" },
+  IEX: { ticker: "IEX", name: "IDEX Corporation", price: 196.93, sector: "Industrials" },
+  JPM: { ticker: "JPM", name: "JP Morgan Chase & Co.", price: 312.47, sector: "Financial Services" },
+  KO: { ticker: "KO", name: "Coca-Cola Company (The)", price: 70.44, sector: "Consumer Defensive" },
+  LMT: { ticker: "LMT", name: "Lockheed Martin Corporation", price: 582.43, sector: "Industrials" },
+  MS: { ticker: "MS", name: "Morgan Stanley", price: 189.09, sector: "Financial Services" },
+  MSCI: { ticker: "MSCI", name: "MSCI Inc.", price: 602.58, sector: "Financial Services" },
+  MSFT: { ticker: "MSFT", name: "Microsoft Corporation", price: 459.86, sector: "Technology" },
+  NFLX: { ticker: "NFLX", name: "Netflix, Inc.", price: 88.00, sector: "Communication Services" },
+  OSK: { ticker: "OSK", name: "Oshkosh Corporation", price: 152.25, sector: "Industrials" },
+  PFE: { ticker: "PFE", name: "Pfizer, Inc.", price: 25.65, sector: "Healthcare" },
+  PG: { ticker: "PG", name: "Procter & Gamble Company (The)", price: 144.53, sector: "Consumer Defensive" },
+  SPY: { ticker: "SPY", name: "SPDR S&P 500", price: 691.66, sector: "Financial Services" },
+  TMUS: { ticker: "TMUS", name: "T-Mobile US, Inc.", price: 186.32, sector: "Communication Services" },
+};
 
 // Common column names for ticker/symbol
 const TICKER_COLUMNS = [
@@ -158,6 +189,7 @@ function parsePortfolioData(text: string): PortfolioItem[] {
 export function PortfolioInput({
   portfolio,
   setPortfolio,
+  setStockInfo,
   compact = false,
 }: PortfolioInputProps) {
   const [ticker, setTicker] = useState("");
@@ -344,6 +376,10 @@ export function PortfolioInput({
   };
 
   const loadSamplePortfolio = () => {
+    // Set placeholder stock info immediately for smooth UX
+    if (setStockInfo) {
+      setStockInfo(SAMPLE_STOCK_INFO);
+    }
     setPortfolio(SAMPLE_PORTFOLIO);
   };
 

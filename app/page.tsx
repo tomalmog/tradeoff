@@ -122,7 +122,7 @@ export default function Home() {
         console.error("Failed to fetch stock data:", err);
       }
     },
-    [stockInfo],
+    [], // Remove stockInfo from dependencies to prevent infinite loop
   );
 
   useEffect(() => {
@@ -214,7 +214,7 @@ export default function Home() {
     } catch (error) {
       console.error("Error preloading tabs:", error);
     }
-  }, [portfolio, analysisResult, riskAnalysisResult, cachedArticles]);
+  }, [portfolio]); // Only depend on portfolio, not the state variables we're updating
 
   // Trigger preload when portfolio changes and has items
   useEffect(() => {
@@ -264,9 +264,9 @@ export default function Home() {
             {/* Logo */}
             <div className="flex items-center gap-2">
               <svg className="w-6 h-6 text-[#3fb950]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                <path d="M2 17l10 5 10-5"/>
-                <path d="M2 12l10 5 10-5"/>
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
               </svg>
               <h1 className="text-xl font-bold">
                 <span className="text-white">Trade</span>
@@ -343,7 +343,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-[#2d3139] py-4 px-4 mt-auto">
         <div className="max-w-[1400px] mx-auto flex items-center justify-between text-xs text-[#858687]">
-          <span>TradeOff © 2026</span>
+          <span>Built for NexHacks 2026 · Powered by Polymarket, Groq & Wood Wide AI</span>
           <div className="flex items-center gap-4">
             <a href="#" className="hover:text-white">Privacy</a>
             <a href="#" className="hover:text-white">Terms</a>

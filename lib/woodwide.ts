@@ -142,11 +142,20 @@ class WoodWideClient {
    */
   async verifyAuth(): Promise<{ valid: boolean; credits?: number }> {
     try {
+      console.log("[Wood Wide AI] 🔐 Authenticating with Wood Wide API...");
+      const startTime = Date.now();
+
       const response = await this.request<{ wwai_credits?: number }>(
         "/auth/me",
       );
+
+      const elapsed = Date.now() - startTime;
+      console.log(`[Wood Wide AI] ✅ Authentication successful (${elapsed}ms)`);
+      console.log(`[Wood Wide AI] 💳 Available credits: ${response.wwai_credits || 'unlimited'}`);
+
       return { valid: true, credits: response.wwai_credits };
-    } catch {
+    } catch (error) {
+      console.log("[Wood Wide AI] ⚠️  Authentication failed, using fallback analysis");
       return { valid: false };
     }
   }
@@ -353,23 +362,29 @@ class WoodWideClient {
     const referenceData = getReferenceDataForTraining();
     const csvContent = this.toCSV(referenceData);
 
-    console.log("[WoodWide] Uploading reference portfolio dataset...");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("[Wood Wide AI] 📊 Initializing reference models");
+    console.log("[Wood Wide AI] 📤 Uploading reference portfolio dataset...");
+    const uploadStart = Date.now();
+
     const dataset = await this.uploadDatasetCSV(
       "reference_portfolios",
       csvContent,
       true,
     );
     this.referenceDatasetId = dataset.id;
+
+    const uploadTime = Date.now() - uploadStart;
     console.log(
-      "[WoodWide] Reference dataset uploaded:",
-      dataset.id,
-      `(${dataset.num_rows} rows)`,
+      `[Wood Wide AI] ✅ Dataset uploaded: ${dataset.id} (${dataset.num_rows} rows, ${uploadTime}ms)`,
     );
 
     // Train anomaly model on reference data
     console.log(
-      "[WoodWide] Training anomaly detection model on reference portfolios...",
+      "[Wood Wide AI] 🧠 Training anomaly detection model...",
     );
+    const trainStart = Date.now();
+
     const anomalyModel = await this.trainAnomalyModel(
       "portfolio_anomaly_detector",
       dataset.id,
@@ -385,7 +400,11 @@ class WoodWideClient {
 
     const trainedModel = await this.waitForModel(anomalyModel.id, 60000);
     this.anomalyModelId = trainedModel.id;
-    console.log("[WoodWide] Anomaly model trained:", trainedModel.id);
+
+    const trainTime = Date.now() - trainStart;
+    console.log(`[Wood Wide AI] ✅ Model trained: ${trainedModel.id} (${trainTime}ms)`);
+    console.log("[Wood Wide AI] 🎯 Ready for portfolio analysis");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   }
 
   /**
@@ -399,10 +418,18 @@ class WoodWideClient {
       largestPosition: { ticker: string; weight: number };
     },
   ): Promise<WoodWideAnalysisResult> {
+    const analysisStartTime = Date.now();
     const insights: WoodWideInsight[] = [];
+
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("[Wood Wide AI] 🔍 Starting portfolio analysis");
+    console.log(`[Wood Wide AI] 📈 Portfolio: ${holdings.length} holdings, $${portfolioMetrics.totalValue.toLocaleString()}`);
 
     try {
       // Step 1: Classify portfolio using our reference data
+      console.log("[Wood Wide AI] 🏷️  Step 1: Portfolio Classification");
+      const classifyStart = Date.now();
+
       const topSectorWeight = Math.max(
         ...Object.values(portfolioMetrics.sectorWeights),
       );
@@ -414,6 +441,9 @@ class WoodWideClient {
         num_holdings: holdings.length,
         tech_exposure: techExposure,
       });
+
+      const classifyTime = Date.now() - classifyStart;
+      console.log(`[Wood Wide AI] ✅ Classification: ${classification.profile} (${classification.confidence}% confidence, ${classifyTime}ms)`);
 
       // Add classification insight
       insights.push({
@@ -451,6 +481,7 @@ class WoodWideClient {
       }
 
       // Step 2: Initialize Wood Wide models if needed and run anomaly detection
+      console.log("[Wood Wide AI] 🔬 Step 2: Anomaly Detection");
       let anomalyResults: {
         ticker: string;
         score: number;
@@ -465,6 +496,9 @@ class WoodWideClient {
         }
 
         // Prepare user portfolio data for comparison
+        const anomalyStart = Date.now();
+        console.log("[Wood Wide AI] 📊 Preparing portfolio data for anomaly detection...");
+
         const userPortfolioData = holdings.map((h) => ({
           ticker: h.ticker,
           weight: h.weight,
@@ -492,6 +526,7 @@ class WoodWideClient {
         }));
 
         // Upload user portfolio
+        console.log("[Wood Wide AI] 📤 Uploading user portfolio for analysis...");
         const csvContent = this.toCSV(userPortfolioData);
         const userDataset = await this.uploadDatasetCSV(
           `user_portfolio_${Date.now()}`,
@@ -502,7 +537,7 @@ class WoodWideClient {
         // Run anomaly detection
         if (this.anomalyModelId) {
           console.log(
-            "[WoodWide] Running anomaly detection on user portfolio...",
+            "[Wood Wide AI] 🎯 Running anomaly detection inference...",
           );
           const anomalies = await this.detectAnomalies(
             this.anomalyModelId,
@@ -521,6 +556,10 @@ class WoodWideClient {
             };
           });
 
+          const anomalyTime = Date.now() - anomalyStart;
+          const anomalousCount = anomalyResults.filter((a) => a.isAnomaly).length;
+          console.log(`[Wood Wide AI] ✅ Anomaly detection complete: ${anomalousCount} anomalies found (${anomalyTime}ms)`);
+
           // Add insights for detected anomalies
           const anomalousPositions = anomalyResults.filter((a) => a.isAnomaly);
           if (anomalousPositions.length > 0) {
@@ -538,7 +577,7 @@ class WoodWideClient {
           }
         }
       } catch (woodWideError) {
-        console.error("[WoodWide] Model analysis error:", woodWideError);
+        console.error("[Wood Wide AI] ❌ Model analysis error:", woodWideError);
         // Continue with classification-only results
         insights.push({
           type: "pattern",
@@ -551,6 +590,8 @@ class WoodWideClient {
       }
 
       // Step 3: Pattern-based insights
+      console.log("[Wood Wide AI] 🔍 Step 3: Pattern Analysis");
+
       // Check for common risky patterns
       if (techExposure > 50 && holdings.length < 10) {
         insights.push({
@@ -594,6 +635,10 @@ class WoodWideClient {
       riskScore += Math.min(15, Math.max(0, 15 - holdings.length) * 1.5);
       riskScore = Math.min(100, Math.round(riskScore));
 
+      const totalTime = Date.now() - analysisStartTime;
+      console.log(`[Wood Wide AI] ✅ Analysis complete: ${insights.length} insights, risk score ${riskScore}/100 (${totalTime}ms)`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
       return {
         enabled: true,
         insights,
@@ -607,7 +652,8 @@ class WoodWideClient {
         riskScore,
       };
     } catch (error) {
-      console.error("[WoodWide] Analysis error:", error);
+      console.error("[Wood Wide AI] ❌ Analysis error:", error);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       return {
         enabled: true,
         insights,
@@ -624,11 +670,13 @@ export function getWoodWideClient(): WoodWideClient | null {
   const apiKey = process.env.WOOD_WIDE_API_KEY;
 
   if (!apiKey) {
-    console.warn("[WoodWide] No API key configured (WOOD_WIDE_API_KEY)");
+    console.log("[Wood Wide AI] ⚠️  No API key configured (WOOD_WIDE_API_KEY)");
+    console.log("[Wood Wide AI] 📊 Using fallback classification and pattern analysis");
     return null;
   }
 
   if (!client) {
+    console.log("[Wood Wide AI] 🚀 Initializing Wood Wide AI client");
     client = new WoodWideClient(apiKey);
   }
 

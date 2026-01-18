@@ -157,11 +157,11 @@ export function RiskView({
   // Count alerts by severity
   const alertCounts = result
     ? {
-        critical: result.alerts.filter((a) => a.severity === "critical").length,
-        high: result.alerts.filter((a) => a.severity === "high").length,
-        medium: result.alerts.filter((a) => a.severity === "medium").length,
-        low: result.alerts.filter((a) => a.severity === "low").length,
-      }
+      critical: result.alerts.filter((a) => a.severity === "critical").length,
+      high: result.alerts.filter((a) => a.severity === "high").length,
+      medium: result.alerts.filter((a) => a.severity === "medium").length,
+      low: result.alerts.filter((a) => a.severity === "low").length,
+    }
     : { critical: 0, high: 0, medium: 0, low: 0 };
 
   const getAssessmentIcon = (assessment: "better" | "worse" | "similar") => {
@@ -241,7 +241,7 @@ export function RiskView({
           <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin mb-4" />
           <p className="text-muted-foreground">Analyzing portfolio risks...</p>
           <p className="text-sm text-muted-foreground mt-1">
-            Checking {portfolio.length} stocks against risk factors
+            Running Wood Wide AI analysis on {portfolio.length} stocks
           </p>
         </div>
       )}
@@ -258,42 +258,41 @@ export function RiskView({
             {(alertCounts.critical > 0 ||
               alertCounts.high > 0 ||
               alertCounts.medium > 0) && (
-              <div className="flex flex-wrap gap-2 mt-4">
-                {alertCounts.critical > 0 && (
-                  <span className="px-3 py-1 rounded-full bg-red-500/20 text-red-400 text-sm font-medium">
-                    {alertCounts.critical} Critical
-                  </span>
-                )}
-                {alertCounts.high > 0 && (
-                  <span className="px-3 py-1 rounded-full bg-orange-500/20 text-orange-400 text-sm font-medium">
-                    {alertCounts.high} High
-                  </span>
-                )}
-                {alertCounts.medium > 0 && (
-                  <span className="px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-sm font-medium">
-                    {alertCounts.medium} Moderate
-                  </span>
-                )}
-                {alertCounts.low > 0 && (
-                  <span className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm font-medium">
-                    {alertCounts.low} Low
-                  </span>
-                )}
-              </div>
-            )}
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {alertCounts.critical > 0 && (
+                    <span className="px-3 py-1 rounded-full bg-red-500/20 text-red-400 text-sm font-medium">
+                      {alertCounts.critical} Critical
+                    </span>
+                  )}
+                  {alertCounts.high > 0 && (
+                    <span className="px-3 py-1 rounded-full bg-orange-500/20 text-orange-400 text-sm font-medium">
+                      {alertCounts.high} High
+                    </span>
+                  )}
+                  {alertCounts.medium > 0 && (
+                    <span className="px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-sm font-medium">
+                      {alertCounts.medium} Moderate
+                    </span>
+                  )}
+                  {alertCounts.low > 0 && (
+                    <span className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm font-medium">
+                      {alertCounts.low} Low
+                    </span>
+                  )}
+                </div>
+              )}
 
             {/* Wood Wide AI Status */}
             {result.woodWideAnalysis && (
               <div className="mt-4 pt-4 border-t border-border/50">
                 <div className="flex items-center gap-2">
                   <div
-                    className={`w-2 h-2 rounded-full ${
-                      result.woodWideAnalysis.error
+                    className={`w-2 h-2 rounded-full ${result.woodWideAnalysis.error
                         ? "bg-red-400"
                         : result.woodWideAnalysis.enabled
                           ? "bg-green-400"
                           : "bg-gray-400"
-                    }`}
+                      }`}
                   />
                   <span className="text-xs text-muted-foreground">
                     Wood Wide AI:{" "}

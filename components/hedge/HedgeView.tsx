@@ -127,16 +127,6 @@ export function HedgeView({
                 ${totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
             </div>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {portfolio.map((p) => (
-                <span
-                  key={p.ticker}
-                  className="px-2 py-0.5 bg-secondary rounded text-xs font-mono"
-                >
-                  {p.ticker}
-                </span>
-              ))}
-            </div>
           </div>
           {analysisResult && !isAnalyzing && (
             <Button

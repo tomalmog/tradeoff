@@ -30,6 +30,8 @@ export function HedgeView({
   const hasAutoAnalyzed = useRef(false);
   const [correlationData, setCorrelationData] = useState<Record<string, CorrelationInsight>>({});
   const [isLoadingCorrelations, setIsLoadingCorrelations] = useState(false);
+  const [woodWideResult, setWoodWideResult] = useState<{ totalCalls: number; timestamp: string } | null>(null);
+  const hasCalledWoodWide = useRef(false);
 
   const handleAnalyze = async () => {
     if (portfolio.length === 0) return;
@@ -126,6 +128,47 @@ export function HedgeView({
     
     fetchCorrelations();
   }, [analysisResult]);
+
+  // Call Wood Wide API when hedges page loads (3 API calls)
+  useEffect(() => {
+    const callWoodWide = async () => {
+      if (portfolio.length === 0 || hasCalledWoodWide.current) return;
+      
+      hasCalledWoodWide.current = true;
+      console.log("[HedgeView] Calling Wood Wide API (3 calls)...");
+      
+      try {
+        const portfolioWithValues = portfolio.map(p => {
+          const info = stockInfo[p.ticker];
+          return {
+            ticker: p.ticker,
+            shares: p.shares,
+            value: info ? info.price * p.shares : 0,
+            sector: info?.sector || "Unknown",
+          };
+        });
+
+        const response = await fetch("/api/woodwide", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ portfolio: portfolioWithValues }),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          setWoodWideResult({
+            totalCalls: result.totalCalls,
+            timestamp: result.timestamp,
+          });
+          console.log(`[HedgeView] Wood Wide complete: ${result.totalCalls} API calls made`);
+        }
+      } catch (err) {
+        console.error("[HedgeView] Wood Wide API error:", err);
+      }
+    };
+
+    callWoodWide();
+  }, [portfolio, stockInfo]);
 
   // Calculate total portfolio value
   const totalValue = portfolio.reduce((sum, p) => {

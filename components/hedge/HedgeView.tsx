@@ -211,6 +211,9 @@ export function HedgeView({
       {/* Results */}
       {analysisResult && !isAnalyzing && (
         <>
+          {/* Wood Wide Stats Banner - Show prominently */}
+          <WoodWideAttribution variant="stats" />
+          
           {/* Correlation loading indicator */}
           {isLoadingCorrelations && Object.keys(correlationData).length === 0 && (
             <div className="flex items-center gap-2 text-xs text-[#858687] bg-[#1c2026] border border-[#2d3139] rounded-lg px-3 py-2">
@@ -230,13 +233,6 @@ export function HedgeView({
             }}
             correlationData={correlationData}
           />
-
-          {/* Wood Wide Attribution */}
-          {Object.values(correlationData).some(c => c.hasHistoricalData) && (
-            <div className="flex justify-center pt-4">
-              <WoodWideAttribution variant="inline" />
-            </div>
-          )}
         </>
       )}
     </div>

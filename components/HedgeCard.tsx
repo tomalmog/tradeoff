@@ -6,6 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Newspaper, History, TrendingUp, Sparkles, X, ChevronRight, Calendar, DollarSign, CheckCircle2, XCircle } from "lucide-react";
 import type { HedgeRecommendation, StockInfo } from "@/app/page";
 
+// Topic categories for semantic matching
+type EventTopic = 
+  | 'regulatory' | 'safety_incident' | 'product_launch' | 'executive'
+  | 'legal' | 'financial' | 'geopolitical' | 'social_media'
+  | 'crypto' | 'entertainment' | 'ai_tech' | 'election' | 'other';
+
 export interface CorrelationInsight {
   hasHistoricalData: boolean;
   matchCount: number;
@@ -21,6 +27,8 @@ export interface CorrelationInsight {
   avgOutcome?: "YES" | "NO";
   yesCount: number;
   noCount: number;
+  matchType?: 'topic' | 'ticker_only' | 'none';
+  detectedTopic?: EventTopic;
   woodWidePrediction?: {
     prediction: number;
     confidence: number;
@@ -32,6 +40,26 @@ interface HedgeCardProps {
   stockInfo?: Record<string, StockInfo>;
   onBetSelect?: (bet: HedgeRecommendation | null) => void;
   correlationInsight?: CorrelationInsight;
+}
+
+// Format topic for display
+function formatTopic(topic?: EventTopic): string {
+  const topicLabels: Record<EventTopic, string> = {
+    regulatory: 'regulatory/trade',
+    safety_incident: 'safety',
+    product_launch: 'product launch',
+    executive: 'executive action',
+    legal: 'legal',
+    financial: 'financial',
+    geopolitical: 'geopolitical',
+    social_media: 'social media',
+    crypto: 'crypto',
+    entertainment: 'entertainment',
+    ai_tech: 'AI/tech',
+    election: 'election',
+    other: 'general',
+  };
+  return topic ? topicLabels[topic] : 'general';
 }
 
 // Historical Events Modal Component
@@ -70,12 +98,24 @@ function HistoricalEventsModal({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[#2d3139] bg-gradient-to-r from-[#1a1f2e] to-[#1c2026] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#3fb950]/20 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-[#3fb950]" />
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+              correlationInsight.matchType === 'topic' 
+                ? 'bg-[#3fb950]/20' 
+                : 'bg-[#f0883e]/20'
+            }`}>
+              <Sparkles className={`w-5 h-5 ${
+                correlationInsight.matchType === 'topic' 
+                  ? 'text-[#3fb950]' 
+                  : 'text-[#f0883e]'
+              }`} />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-white">Historical Backing</h3>
-              <p className="text-xs text-[#858687]">Past Polymarket bets involving the same stocks</p>
+              <h3 className="text-lg font-semibold text-white">
+                Wood Wide AI Analysis
+              </h3>
+              <p className="text-xs text-[#858687]">
+                Semantically similar historical bets with price data
+              </p>
             </div>
           </div>
           <button
@@ -115,9 +155,11 @@ function HistoricalEventsModal({
         {/* Events List - Scrollable */}
         <div className="overflow-y-auto flex-1 min-h-0 p-4 space-y-3">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium text-[#858687]">Historical Bets on Same Stocks</h4>
-            <span className="text-[10px] text-[#58a6ff] bg-[#58a6ff]/10 px-2 py-0.5 rounded">
-              Matched by ticker symbol
+            <h4 className="text-sm font-medium text-[#858687]">
+              Semantically Similar Bets
+            </h4>
+            <span className="text-[10px] px-2 py-0.5 rounded text-[#3fb950] bg-[#3fb950]/10">
+              AI Matched
             </span>
           </div>
           
@@ -320,14 +362,20 @@ export function HedgeCard({ recommendation, stockInfo = {}, onBetSelect, correla
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-semibold text-[#3fb950]">
-                        Historically Backed
+                      <span className={`text-xs font-semibold ${
+                        'text-[#3fb950]'
+                      }`}>
+                        AI Matched
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#3fb950]/20 text-[#3fb950] font-mono">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[#3fb950]/20 text-[#3fb950]">
                         +{correlationInsight.confidenceBoost}% confidence
                       </span>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#3fb950] opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                    <ChevronRight className={`w-4 h-4 opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all ${
+                      correlationInsight.matchType === 'topic' 
+                        ? 'text-[#3fb950]' 
+                        : 'text-[#f0883e]'
+                    }`} />
                   </div>
                   <p className="text-xs text-[#a0a0a0] mt-1">
                     {correlationInsight.insight}

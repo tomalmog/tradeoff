@@ -15,6 +15,22 @@ import * as path from 'path';
 
 // ============ Types ============
 
+// Topic categories for semantic matching
+type EventTopic = 
+  | 'regulatory'      // Tariffs, bans, laws, regulations
+  | 'safety_incident' // Crashes, emergencies, accidents
+  | 'product_launch'  // New products, releases, unveilings
+  | 'executive'       // CEO actions, tweets, statements
+  | 'legal'           // Lawsuits, court cases, indictments
+  | 'financial'       // Earnings, IPO, stock movements
+  | 'geopolitical'    // Wars, conflicts, international relations
+  | 'social_media'    // Tweets, posts, platform activity
+  | 'crypto'          // Cryptocurrency, blockchain, tokens
+  | 'entertainment'   // Movies, celebrities, sports
+  | 'ai_tech'         // AI, machine learning, tech products
+  | 'election'        // Political elections, voting
+  | 'other';          // Catch-all
+
 interface ResolvedEvent {
   eventId: string;
   title: string;
@@ -23,6 +39,7 @@ interface ResolvedEvent {
   resolutionDate: string;
   outcome: 'YES' | 'NO' | 'UNKNOWN';
   finalProbability: number | null;
+  topic: EventTopic;  // NEW: Topic category for semantic matching
 }
 
 interface StockPrice {
@@ -112,8 +129,8 @@ const COMPANY_MAPPINGS: Record<string, { ticker: string; names: string[]; exactO
     ticker: 'MSFT', 
     names: [
       'Microsoft', 'Azure', 'Windows', 'Satya Nadella', 'Xbox', 'Office 365',
-      'LinkedIn', 'GitHub', 'Bing', 'Copilot', 'Surface', 'Activision',
-      'OpenAI' // Microsoft's major investment
+      'LinkedIn', 'GitHub', 'Bing', 'Copilot', 'Surface', 'Activision'
+      // Note: Removed OpenAI - it's not publicly traded and creates confusing correlations
     ],
     exactOnly: ['Microsoft Teams'] // Don't match "Teams" alone (could be sports)
   },
@@ -359,6 +376,239 @@ const COMPANY_MAPPINGS: Record<string, { ticker: string; names: string[]; exactO
   BBBY: { ticker: 'BBBY', names: ['Bed Bath & Beyond', 'Bed Bath and Beyond'] },
 };
 
+// ============ Topic Extraction ============
+
+// Keywords for each topic category (order matters - first match wins)
+const TOPIC_KEYWORDS: { topic: EventTopic; keywords: string[] }[] = [
+  { 
+    topic: 'regulatory', 
+    keywords: [
+      'tariff', 'ban', 'illegal', 'regulation', 'law', 'legislation', 'congress',
+      'senate', 'bill', 'act', 'antitrust', 'ftc', 'sec', 'doj', 'sanction',
+      'import', 'export', 'trade war', 'trade deal', 'customs', 'duty', 'quota'
+    ]
+  },
+  { 
+    topic: 'safety_incident', 
+    keywords: [
+      'emergency', 'crash', 'accident', 'incident', 'disaster', 'explosion',
+      'fire', 'death', 'injury', 'recall', 'defect', 'malfunction', 'grounded',
+      'landing', 'collision', 'derail'
+    ]
+  },
+  { 
+    topic: 'legal', 
+    keywords: [
+      'lawsuit', 'sue', 'court', 'judge', 'trial', 'verdict', 'settlement',
+      'indictment', 'arrest', 'guilty', 'convicted', 'appeal', 'ruling',
+      'prison', 'jail', 'fine', 'penalty', 'charge', 'allegation'
+    ]
+  },
+  { 
+    topic: 'geopolitical', 
+    keywords: [
+      'war', 'invasion', 'military', 'ceasefire', 'peace', 'conflict', 'nato',
+      'ukraine', 'russia', 'china', 'taiwan', 'israel', 'iran', 'missile',
+      'nuclear', 'troops', 'intervention', 'sanctions'
+    ]
+  },
+  { 
+    topic: 'election', 
+    keywords: [
+      'election', 'vote', 'ballot', 'poll', 'candidate', 'president', 'governor',
+      'senator', 'congress', 'democrat', 'republican', 'primary', 'nominee',
+      'campaign', 'electoral'
+    ]
+  },
+  { 
+    topic: 'product_launch', 
+    keywords: [
+      'launch', 'release', 'unveil', 'announce', 'debut', 'rollout', 'preview',
+      'reveal', 'introduce', 'ship', 'available', 'beta', 'update', 'version'
+    ]
+  },
+  { 
+    topic: 'executive', 
+    keywords: [
+      'ceo', 'cto', 'cfo', 'executive', 'founder', 'chairman', 'board',
+      'resign', 'fired', 'hired', 'step down', 'appointment'
+    ]
+  },
+  { 
+    topic: 'social_media', 
+    keywords: [
+      'tweet', 'post', 'instagram', 'tiktok', 'youtube', 'facebook', 'twitter',
+      'x.com', 'follow', 'unfollow', 'viral', 'trending', 'account', 'profile'
+    ]
+  },
+  { 
+    topic: 'crypto', 
+    keywords: [
+      'bitcoin', 'ethereum', 'crypto', 'blockchain', 'token', 'nft', 'defi',
+      'exchange', 'wallet', 'mining', 'halving', 'etf', 'coinbase', 'binance',
+      'solana', 'dogecoin', 'memecoin'
+    ]
+  },
+  { 
+    topic: 'ai_tech', 
+    keywords: [
+      'ai', 'artificial intelligence', 'machine learning', 'chatgpt', 'gpt',
+      'openai', 'gemini', 'claude', 'llm', 'neural', 'model', 'training',
+      'inference', 'chip', 'gpu', 'nvidia', 'semiconductor'
+    ]
+  },
+  { 
+    topic: 'financial', 
+    keywords: [
+      'earnings', 'revenue', 'profit', 'loss', 'ipo', 'stock', 'share',
+      'dividend', 'buyback', 'market cap', 'valuation', 'funding', 'round',
+      'investment', 'acquisition', 'merger', 'bankruptcy', 'debt'
+    ]
+  },
+  { 
+    topic: 'entertainment', 
+    keywords: [
+      'movie', 'film', 'box office', 'album', 'song', 'concert', 'award',
+      'grammy', 'oscar', 'emmy', 'celebrity', 'star', 'actor', 'actress',
+      'sports', 'nba', 'nfl', 'mlb', 'championship', 'super bowl'
+    ]
+  },
+];
+
+/**
+ * Extract topic from event title and description
+ */
+function extractTopic(title: string, description: string): EventTopic {
+  const text = `${title} ${description}`.toLowerCase();
+  
+  for (const { topic, keywords } of TOPIC_KEYWORDS) {
+    for (const keyword of keywords) {
+      if (text.includes(keyword.toLowerCase())) {
+        return topic;
+      }
+    }
+  }
+  
+  return 'other';
+}
+
+// ============ Thematic/Sector Matching ============
+
+// Map topics to related stocks (for broader correlation)
+const TOPIC_STOCK_MAPPINGS: Record<EventTopic, { stocks: string[]; reason: string }> = {
+  regulatory: {
+    stocks: ['META', 'GOOGL', 'AMZN', 'AAPL', 'MSFT', 'NVDA', 'TSLA'],
+    reason: 'Regulatory changes impact large tech and market leaders'
+  },
+  safety_incident: {
+    stocks: ['BA', 'LMT', 'RTX', 'GD', 'NOC', 'AAL', 'UAL', 'DAL'],
+    reason: 'Safety incidents affect aerospace and defense sector'
+  },
+  legal: {
+    stocks: ['META', 'GOOGL', 'AMZN', 'AAPL', 'MSFT', 'TSLA'],
+    reason: 'Legal matters frequently involve major tech companies'
+  },
+  geopolitical: {
+    stocks: ['LMT', 'RTX', 'NOC', 'GD', 'BA', 'XOM', 'CVX', 'OXY', 'TSM', 'INTC'],
+    reason: 'Geopolitical events affect defense, energy, and semiconductor supply chains'
+  },
+  election: {
+    stocks: ['SPY', 'QQQ', 'DIA', 'TSLA', 'META', 'GOOGL', 'XOM', 'CVX'],
+    reason: 'Elections impact market sentiment and specific policy-sensitive sectors'
+  },
+  product_launch: {
+    stocks: ['AAPL', 'GOOGL', 'MSFT', 'META', 'NVDA', 'AMD', 'TSLA'],
+    reason: 'Product launches drive tech sector movements'
+  },
+  executive: {
+    stocks: ['TSLA', 'META', 'AAPL', 'MSFT', 'GOOGL', 'AMZN'],
+    reason: 'Executive changes affect major companies'
+  },
+  social_media: {
+    stocks: ['META', 'SNAP', 'PINS', 'RDDT', 'GOOGL', 'TWTR'],
+    reason: 'Social media events impact the sector'
+  },
+  crypto: {
+    stocks: ['COIN', 'MSTR', 'MARA', 'RIOT', 'SQ', 'HOOD', 'PYPL'],
+    reason: 'Crypto events affect crypto-related equities'
+  },
+  ai_tech: {
+    stocks: ['NVDA', 'AMD', 'GOOGL', 'MSFT', 'META', 'AMZN', 'TSM', 'AVGO', 'INTC'],
+    reason: 'AI developments impact the semiconductor and tech sector'
+  },
+  financial: {
+    stocks: ['JPM', 'BAC', 'GS', 'MS', 'C', 'WFC', 'BRK.B', 'V', 'MA'],
+    reason: 'Financial events affect banking and payment sectors'
+  },
+  entertainment: {
+    stocks: ['DIS', 'NFLX', 'WBD', 'PARA', 'CMCSA', 'SPOT'],
+    reason: 'Entertainment events impact media companies'
+  },
+  other: {
+    stocks: [],
+    reason: 'General market event'
+  }
+};
+
+// High-impact keywords that should ALWAYS match to certain stocks
+const HIGH_IMPACT_KEYWORDS: { keywords: string[]; stocks: string[]; reason: string }[] = [
+  {
+    keywords: ['trump', 'biden', 'white house', 'president', 'potus'],
+    stocks: ['SPY', 'QQQ', 'TSLA', 'META', 'XOM', 'LMT'],
+    reason: 'Presidential politics affects broad market'
+  },
+  {
+    keywords: ['fed', 'interest rate', 'powell', 'fomc', 'federal reserve'],
+    stocks: ['SPY', 'QQQ', 'JPM', 'BAC', 'GS', 'AAPL', 'MSFT'],
+    reason: 'Fed policy affects all markets'
+  },
+  {
+    keywords: ['china', 'chinese', 'beijing', 'ccp'],
+    stocks: ['TSM', 'AAPL', 'NVDA', 'NIO', 'BABA', 'JD', 'PDD'],
+    reason: 'China-related events affect supply chains and Chinese equities'
+  },
+  {
+    keywords: ['tiktok', 'bytedance'],
+    stocks: ['META', 'SNAP', 'GOOGL', 'PINS'],
+    reason: 'TikTok events benefit competitors'
+  },
+  {
+    keywords: ['ukraine', 'russia', 'putin', 'zelensky', 'nato', 'war'],
+    stocks: ['LMT', 'RTX', 'NOC', 'GD', 'BA', 'XOM', 'CVX', 'HAL'],
+    reason: 'Ukraine conflict affects defense and energy'
+  },
+  {
+    keywords: ['taiwan', 'tsmc', 'chip', 'semiconductor'],
+    stocks: ['TSM', 'NVDA', 'AMD', 'INTC', 'AVGO', 'QCOM', 'ASML', 'MU'],
+    reason: 'Taiwan/chip events affect semiconductor sector'
+  },
+  {
+    keywords: ['bitcoin', 'btc', 'crypto', 'ethereum', 'eth'],
+    stocks: ['COIN', 'MSTR', 'MARA', 'RIOT', 'SQ', 'HOOD'],
+    reason: 'Crypto price movements affect crypto stocks'
+  },
+  {
+    keywords: ['openai', 'chatgpt', 'gpt-4', 'gpt-5', 'ai model', 'large language'],
+    stocks: ['MSFT', 'NVDA', 'GOOGL', 'META', 'AMD'],
+    reason: 'AI developments affect tech and chip stocks'
+  },
+  {
+    keywords: ['apple', 'iphone', 'ipad', 'tim cook', 'wwdc'],
+    stocks: ['AAPL', 'QCOM', 'TSM', 'AVGO'],
+    reason: 'Apple events affect supply chain'
+  },
+  {
+    keywords: ['elon', 'musk', 'spacex', 'starlink', 'neuralink'],
+    stocks: ['TSLA', 'TWTR'],
+    reason: 'Musk activities affect his companies'
+  },
+  {
+    keywords: ['zuckerberg', 'meta', 'facebook', 'instagram', 'whatsapp', 'threads'],
+    stocks: ['META', 'SNAP', 'PINS'],
+    reason: 'Meta events affect social media sector'
+  }
+];
+
 // ============ Polymarket API ============
 
 const GAMMA_API_BASE = 'https://gamma-api.polymarket.com';
@@ -461,6 +711,9 @@ async function fetchResolvedEvents(yearsBack: number = 3): Promise<ResolvedEvent
           }
         }
         
+        // Extract topic for semantic matching
+        const topic = extractTopic(event.title || '', event.description || '');
+        
         allEvents.push({
           eventId: event.id || '',
           title: event.title || '',
@@ -469,6 +722,7 @@ async function fetchResolvedEvents(yearsBack: number = 3): Promise<ResolvedEvent
           resolutionDate: dateStr,
           outcome,
           finalProbability,
+          topic,
         });
       }
       
@@ -501,11 +755,14 @@ async function fetchResolvedEvents(yearsBack: number = 3): Promise<ResolvedEvent
 
 function matchEventToStocks(event: ResolvedEvent): { ticker: string; companyName: string; matchReason: string }[] {
   const matches: { ticker: string; companyName: string; matchReason: string }[] = [];
+  const matchedTickers = new Set<string>();
   const title = event.title || '';
   const desc = event.description || '';
   const titleLower = title.toLowerCase();
   const descLower = desc.toLowerCase();
+  const fullText = `${titleLower} ${descLower}`;
   
+  // === PHASE 1: Direct company name matching (highest priority) ===
   for (const [ticker, mapping] of Object.entries(COMPANY_MAPPINGS)) {
     const { names, exactOnly } = mapping;
     let matched = false;
@@ -521,8 +778,9 @@ function matchEventToStocks(event: ResolvedEvent): { ticker: string; companyName
           matches.push({
             ticker,
             companyName: exactWord,
-            matchReason: `Title contains "${exactWord}"`,
+            matchReason: `Direct mention: "${exactWord}"`,
           });
+          matchedTickers.add(ticker);
           matched = true;
           break;
         }
@@ -533,8 +791,9 @@ function matchEventToStocks(event: ResolvedEvent): { ticker: string; companyName
           matches.push({
             ticker,
             companyName: exactWord,
-            matchReason: `Description contains "${exactWord}"`,
+            matchReason: `Direct mention: "${exactWord}"`,
           });
+          matchedTickers.add(ticker);
           matched = true;
           break;
         }
@@ -555,8 +814,9 @@ function matchEventToStocks(event: ResolvedEvent): { ticker: string; companyName
           matches.push({
             ticker,
             companyName: name,
-            matchReason: `Title contains "${name}"`,
+            matchReason: `Direct mention: "${name}"`,
           });
+          matchedTickers.add(ticker);
           matched = true;
           break;
         }
@@ -567,10 +827,51 @@ function matchEventToStocks(event: ResolvedEvent): { ticker: string; companyName
           matches.push({
             ticker,
             companyName: name,
-            matchReason: `Description contains "${name}"`,
+            matchReason: `Direct mention: "${name}"`,
           });
+          matchedTickers.add(ticker);
           matched = true;
           break;
+        }
+      }
+    }
+  }
+  
+  // === PHASE 2: High-impact keyword matching ===
+  for (const { keywords, stocks, reason } of HIGH_IMPACT_KEYWORDS) {
+    for (const keyword of keywords) {
+      if (fullText.includes(keyword.toLowerCase())) {
+        // Add stocks that aren't already matched
+        for (const ticker of stocks) {
+          if (!matchedTickers.has(ticker)) {
+            matches.push({
+              ticker,
+              companyName: keyword,
+              matchReason: `Keyword correlation: ${reason}`,
+            });
+            matchedTickers.add(ticker);
+          }
+        }
+        break; // Only match first keyword in group
+      }
+    }
+  }
+  
+  // === PHASE 3: Topic-based sector matching (if few matches) ===
+  if (matches.length < 3 && event.topic !== 'other') {
+    const topicMapping = TOPIC_STOCK_MAPPINGS[event.topic];
+    if (topicMapping && topicMapping.stocks.length > 0) {
+      // Add up to 3 sector-related stocks
+      let added = 0;
+      for (const ticker of topicMapping.stocks) {
+        if (!matchedTickers.has(ticker) && added < 3) {
+          matches.push({
+            ticker,
+            companyName: event.topic,
+            matchReason: `Sector correlation: ${topicMapping.reason}`,
+          });
+          matchedTickers.add(ticker);
+          added++;
         }
       }
     }

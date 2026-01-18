@@ -132,7 +132,7 @@ export function HedgeView({
   // Call Wood Wide API when hedges page loads (3 API calls)
   useEffect(() => {
     const callWoodWide = async () => {
-      if (portfolio.length === 0 || hasCalledWoodWide.current) return;
+      if (portfolio.length === 0) return;
       
       hasCalledWoodWide.current = true;
       console.log("[HedgeView] Calling Wood Wide API (3 calls)...");

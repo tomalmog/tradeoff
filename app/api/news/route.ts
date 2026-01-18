@@ -36,15 +36,20 @@ Return a JSON array with enhanced relevance information:
     "relevance": "Why this article is relevant to the portfolio. Provide 2-4 sentences explaining the connection, potential impact on stock prices, and why portfolio holders should care. Be specific and detailed.",
     "relatedStocks": ["TICKER1", "TICKER2"],
     "keyPoints": ["Key point 1", "Key point 2"],
-    "isRelevant": true
+    "isRelevant": true,
+    "betRelevanceScore": 0-10
   }
 ]
 
 RELEVANCE FILTERING RULES:
-- Mark articles as relevant (isRelevant: true) if there is a connection to the portfolio stocks, even if indirect
-- Only mark isRelevant: false if the article explicitly states it's "not relevant", "not really relevant", "unrelated", or has "no clear connection"
-- Include articles that mention the stocks, even if the connection is indirect or speculative
-- Be generous with relevance - it's better to show potentially relevant articles than to filter too aggressively
+- Mark articles as relevant (isRelevant: true) if there is a connection to the portfolio stocks
+- When a specific Polymarket bet is mentioned in the context, be STRICT about relevance:
+  - betRelevanceScore 8-10: Article directly discusses the bet topic (revenue forecasts, specific predictions, etc.)
+  - betRelevanceScore 5-7: Article is related to factors that could influence the bet outcome
+  - betRelevanceScore 1-4: Article mentions the stock but doesn't relate to the bet topic
+  - betRelevanceScore 0: Article is unrelated to both the stock and the bet
+- For bet-specific analysis, mark isRelevant: false if betRelevanceScore < 3
+- If an article doesn't relate to the specific bet topic, say so clearly in the relevance field
 
 IMPORTANT:
 - Return ONLY valid JSON, no markdown or extra text
@@ -52,17 +57,33 @@ IMPORTANT:
 - Focus on how each article affects the specific stocks
 - Be specific about why it matters for the portfolio
 - Write detailed relevance explanations (2-4 sentences, not truncated)
-- Only mark isRelevant: true for articles with clear, direct relevance`;
+- When analyzing for a bet, prioritize articles that directly address the bet's subject matter
+- DO NOT force connections between unrelated articles and bets - be honest when there's no direct connection`;
+
+// Filter news to only include articles from the past week
+function filterToLastWeek(articles: any[]): any[] {
+  const oneWeekAgo = Date.now() / 1000 - (7 * 24 * 60 * 60); // 7 days in seconds
+  
+  return articles.filter(article => {
+    const publishTime = article.providerPublishTime || article.pubDate;
+    if (!publishTime) return true; // Keep articles without dates
+    
+    // Handle both seconds and milliseconds timestamps
+    const timeInSeconds = publishTime > 1e12 ? publishTime / 1000 : publishTime;
+    return timeInSeconds >= oneWeekAgo;
+  });
+}
 
 async function fetchYahooFinanceNews(tickers: string[]): Promise<any[]> {
   const allNews: any[] = [];
 
   // Fetch news for each ticker using Yahoo Finance's public API
+  // Increased newsCount from 5 to 10 for better coverage
   for (const ticker of tickers) {
     try {
       // Use Yahoo Finance's quoteSummary with news module
       const response = await fetch(
-        `https://query1.finance.yahoo.com/v1/finance/search?q=${ticker}&quotesCount=1&newsCount=5`,
+        `https://query1.finance.yahoo.com/v1/finance/search?q=${ticker}&quotesCount=1&newsCount=10`,
         {
           headers: {
             "User-Agent": "Mozilla/5.0",
@@ -125,12 +146,173 @@ async function fetchYahooFinanceNews(tickers: string[]): Promise<any[]> {
 
   // Deduplicate by URL
   const seen = new Set<string>();
-  return allNews.filter((item) => {
+  const deduplicated = allNews.filter(item => {
     const url = item.link || item.url;
     if (!url || seen.has(url)) return false;
     seen.add(url);
     return true;
   });
+  
+  // Filter to only include articles from the past week
+  return filterToLastWeek(deduplicated);
+}
+
+// Extract the main subject/entity from a bet market question
+function extractBetSubject(betMarket: string): string {
+  // Common patterns to extract the main subject
+  const patterns = [
+    /Will\s+(\w+(?:\s+\w+)?)\s+/i,  // "Will OpenAI launch..."
+    /(\w+(?:\s+\w+)?)\s+to\s+/i,    // "Bitcoin to reach..."
+    /^(\w+(?:\s+\w+)?)\s+/i,        // Start with subject
+  ];
+  
+  for (const pattern of patterns) {
+    const match = betMarket.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  
+  // Fallback: first 2-3 significant words
+  const words = betMarket.replace(/[?'"]/g, '').split(' ').filter(w => 
+    w.length > 3 && !['will', 'the', 'by', 'end', 'of', 'in', 'for', 'over'].includes(w.toLowerCase())
+  );
+  return words.slice(0, 2).join(' ');
+}
+
+// Search for news specifically related to a bet topic
+async function fetchBetSpecificNews(
+  betMarket: string,
+  tickers: string[],
+  apiKey: string
+): Promise<any[]> {
+  // Extract the main subject from the bet for better fallback
+  const betSubject = extractBetSubject(betMarket);
+  console.log(`Bet subject extracted: "${betSubject}" from "${betMarket}"`);
+  
+  // Extract key search terms from the bet market question
+  const extractPrompt = `Given this Polymarket bet question: "${betMarket}"
+
+Extract 2-3 specific search queries that would find news articles directly related to this bet.
+Focus on the core topic, key numbers, dates, and entities mentioned.
+
+Return JSON array of search queries:
+["search query 1", "search query 2", "search query 3"]
+
+Examples:
+- "Will NVIDIA generate over $250b in 2025?" → ["NVIDIA revenue 2025", "NVIDIA $250 billion earnings", "NVIDIA financial forecast 2025"]
+- "Will Bitcoin reach $100k by end of 2024?" → ["Bitcoin price prediction 2024", "Bitcoin $100000", "cryptocurrency market 2024"]
+- "Will OpenAI launch a consumer hardware product by end of 2025?" → ["OpenAI hardware product", "OpenAI consumer device 2025", "OpenAI product launch"]
+
+IMPORTANT: Return ONLY the JSON array, no other text.`;
+
+  let searchQueries: string[] = [];
+  
+  for (const model of GROQ_MODELS) {
+    try {
+      const response = await fetch(GROQ_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: extractPrompt }],
+          temperature: 0.3,
+          max_tokens: 200,
+        }),
+      });
+
+      if (response.status === 429) continue;
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) continue;
+
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        searchQueries = JSON.parse(jsonMatch[0]);
+        console.log(`Extracted bet search queries: ${searchQueries.join(', ')}`);
+        break;
+      }
+    } catch (error) {
+      console.error(`Error extracting search queries with model ${model}:`, error);
+      continue;
+    }
+  }
+
+  // Fallback: use key words from the bet
+  if (searchQueries.length === 0) {
+    console.log("Groq failed to extract queries, using fallback");
+    const words = betMarket.replace(/[?'"]/g, '').split(' ').filter(w => 
+      w.length > 3 && !['will', 'the', 'by', 'end', 'of', 'in', 'for', 'over'].includes(w.toLowerCase())
+    );
+    searchQueries = [
+      words.slice(0, 4).join(' '),
+      betSubject + ' news',
+      betSubject + ' 2025',
+    ].filter(q => q.trim().length > 0);
+  }
+
+  const allNews: any[] = [];
+
+  // Search Yahoo Finance for each query
+  for (const query of searchQueries) {
+    try {
+      const encodedQuery = encodeURIComponent(query);
+      const response = await fetch(
+        `https://query1.finance.yahoo.com/v1/finance/search?q=${encodedQuery}&quotesCount=0&newsCount=8`,
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        console.log(`Yahoo search failed for query "${query}": ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+
+      if (data.news && Array.isArray(data.news)) {
+        console.log(`Found ${data.news.length} articles for query "${query}"`);
+        allNews.push(...data.news.map((item: any) => ({
+          title: item.title,
+          summary: item.summary || item.description || item.excerpt || item.snippet || item.text || '',
+          link: item.link,
+          url: item.link,
+          providerPublishTime: item.providerPublishTime,
+          pubDate: item.providerPublishTime,
+          publisher: item.publisher || item.source,
+          source: item.publisher || item.source,
+          uuid: item.uuid,
+          relatedTicker: '', // Don't associate with portfolio tickers - this is bet-specific
+          betSubject: betSubject, // Track the bet subject for fallback text
+          searchQuery: query, // Track which query found this
+          isBetSpecific: true, // Mark as bet-specific
+          rawData: item,
+        })));
+      }
+    } catch (error) {
+      console.error(`Error fetching news for query "${query}":`, error);
+    }
+  }
+
+  // Deduplicate by URL
+  const seen = new Set<string>();
+  const deduplicated = allNews.filter(item => {
+    const url = item.link || item.url;
+    if (!url || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+
+  // Filter to past week
+  return filterToLastWeek(deduplicated);
 }
 
 async function fetchNewsViaGroqSearch(
@@ -219,6 +401,7 @@ async function enhanceNewsWithGroq(
     relatedStocks: string[];
     keyPoints: string[];
     isRelevant: boolean;
+    betRelevanceScore?: number;
   }>
 > {
   if (articles.length === 0) return [];
@@ -441,89 +624,168 @@ export async function POST(request: NextRequest) {
 
     // If specific bet market is provided, focus on that
     if (betMarket) {
-      context += `\n\nFocus on news related to this Polymarket bet: "${betMarket}"`;
+      context += `\n\nIMPORTANT: Focus primarily on news directly related to this Polymarket bet: "${betMarket}"
+      
+When analyzing articles, prioritize:
+1. Articles that directly discuss the specific topic of the bet
+2. Articles with data, forecasts, or analysis relevant to the bet outcome
+3. Articles that could influence the probability of the bet
+
+Mark articles as NOT relevant if they only tangentially mention the stock but don't relate to the bet topic.`;
     }
 
-    // Fetch real news from Yahoo Finance
-    let yahooNews = await fetchYahooFinanceNews(tickers);
-
+    // Fetch real news from Yahoo Finance (stock-based)
+    const yahooNews = await fetchYahooFinanceNews(tickers);
+    
+    // If a bet is selected, also fetch bet-specific news
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let betNews: any[] = [];
+    if (betMarket) {
+      console.log(`Fetching bet-specific news for: "${betMarket}"`);
+      betNews = await fetchBetSpecificNews(betMarket, tickers, groqApiKey);
+      console.log(`Found ${betNews.length} bet-specific articles`);
+    }
+    
+    // Combine news sources, prioritizing bet-specific news
+    let combinedNews = [...betNews, ...yahooNews];
+    
+    // Deduplicate by URL (bet-specific takes priority since it's first)
+    const seenUrls = new Set<string>();
+    combinedNews = combinedNews.filter(item => {
+      const url = item.link || item.url;
+      if (!url || seenUrls.has(url)) return false;
+      seenUrls.add(url);
+      return true;
+    });
+    
     // If no news found, try a fallback approach
-    if (yahooNews.length === 0) {
-      console.log(
-        "Yahoo Finance API returned no news, trying alternative approach...",
-      );
+    if (combinedNews.length === 0) {
+      console.log("No news found, trying alternative approach...");
       // Fallback: Use Groq to find real news articles with search URLs
-      yahooNews = await fetchNewsViaGroqSearch(tickers, context, groqApiKey);
+      combinedNews = await fetchNewsViaGroqSearch(tickers, context, groqApiKey);
     }
-
-    // Limit to most recent 15 articles
-    const recentNews = yahooNews
+    
+    // Sort by date (most recent first) and limit
+    // When bet is selected, keep more articles (20) for better filtering
+    const articleLimit = betMarket ? 20 : 15;
+    const recentNews = combinedNews
       .sort((a, b) => {
         const dateA = a.providerPublishTime || a.pubDate || Date.now() / 1000;
         const dateB = b.providerPublishTime || b.pubDate || Date.now() / 1000;
         return dateB - dateA;
       })
-      .slice(0, 15);
+      .slice(0, articleLimit);
 
+    // Extract bet subject for fallback text
+    const betSubjectForFallback = betMarket ? extractBetSubject(betMarket) : null;
+    
+    // Extract keywords from bet for title-based filtering (fallback when Groq fails)
+    const betKeywords = betMarket 
+      ? betMarket
+          .toLowerCase()
+          .replace(/[?'"<>$]/g, '')
+          .split(/\s+/)
+          .filter(w => w.length > 3 && !['will', 'the', 'by', 'end', 'of', 'in', 'for', 'over', 'this', 'that', 'with', 'from', 'have', 'been'].includes(w))
+      : [];
+    
+    console.log(`Bet keywords for filtering: ${betKeywords.join(', ')}`);
+    
     // Enhance with Groq for relevance
-    let enhancements: Array<{
-      relevance: string;
-      relatedStocks: string[];
-      keyPoints: string[];
-      isRelevant: boolean;
-    }> = [];
+    let enhancements: Array<{ relevance: string; relatedStocks: string[]; keyPoints: string[]; isRelevant: boolean; betRelevanceScore?: number }> = [];
     try {
       enhancements = await enhanceNewsWithGroq(recentNews, context, groqApiKey);
     } catch (error) {
-      console.error("Error enhancing news:", error);
-      // Use fallback enhancements
-      enhancements = recentNews.map((article) => ({
-        relevance: `Recent news about ${article.relatedTicker || "the market"}`,
-        relatedStocks: article.relatedTicker ? [article.relatedTicker] : [],
-        keyPoints: [],
-        isRelevant: true, // Default to true for fallback
-      }));
+      console.error("Error enhancing news - using title-based filtering fallback:", error);
+      // Use fallback enhancements WITH title-based filtering
+      enhancements = recentNews.map((article) => {
+        const subject = article.isBetSpecific 
+          ? (article.betSubject || betSubjectForFallback || 'the bet topic')
+          : (article.relatedTicker || 'the market');
+        
+        // Check if article title contains any bet keywords
+        const titleLower = (article.title || '').toLowerCase();
+        const titleMatchesBet = betMarket && betKeywords.some(keyword => titleLower.includes(keyword));
+        
+        // Also check if title matches portfolio tickers
+        const titleMatchesTicker = tickers.some(ticker => 
+          titleLower.includes(ticker.toLowerCase())
+        );
+        
+        const isRelevantByTitle = titleMatchesBet || titleMatchesTicker;
+        
+        return {
+          relevance: isRelevantByTitle 
+            ? `News related to ${subject}. Groq analysis unavailable - relevance based on title keywords.`
+            : `This article may not be directly related to ${subject}.`,
+          relatedStocks: article.relatedTicker ? [article.relatedTicker] : [],
+          keyPoints: [],
+          isRelevant: isRelevantByTitle, // Filter based on title when Groq fails
+          betRelevanceScore: isRelevantByTitle ? 6 : 1,
+        };
+      });
     }
 
     // Combine real news with enhancements and filter out irrelevant articles
     let articles: NewsArticle[] = recentNews
       .map((article, idx) => {
-        const enhancement = enhancements[idx] ||
-          enhancements[0] || {
-            relevance: "Financial news article",
-            relatedStocks: article.relatedTicker ? [article.relatedTicker] : [],
-            keyPoints: [],
-            isRelevant: true,
-          };
+        const enhancement = enhancements[idx] || enhancements[0] || {
+          relevance: "Financial news article",
+          relatedStocks: article.relatedTicker ? [article.relatedTicker] : [],
+          keyPoints: [],
+          isRelevant: true,
+          betRelevanceScore: 5,
+        };
 
         // Check if article is marked as relevant
         // Only filter if explicitly marked as false, otherwise include it
-        const isRelevant = enhancement.isRelevant !== false; // Default to true if not specified
-
+        let isRelevant = enhancement.isRelevant !== false; // Default to true if not specified
+        
+        // When a bet is selected, use stricter filtering based on bet relevance score
+        if (betMarket && enhancement.betRelevanceScore !== undefined) {
+          // Filter out articles with low bet relevance (score < 3)
+          if (enhancement.betRelevanceScore < 3) {
+            isRelevant = false;
+          }
+        }
+        
         // Only filter based on explicit "not really relevant" or "not relevant" phrases
         // Don't filter on weaker indicators like "maybe" or "possibly" as those might still be useful
         const relevanceText = (enhancement.relevance || "").toLowerCase();
         const strongNegativeIndicators = [
-          "not really relevant",
-          "not relevant",
-          "not particularly relevant",
-          "not especially relevant",
-          "not directly relevant",
-          "no clear connection",
-          "unrelated",
+          'not really relevant',
+          'not relevant',
+          'not particularly relevant',
+          'not especially relevant',
+          'not directly relevant',
+          'no clear connection',
+          'unrelated',
+          'no direct mention',
+          'does not discuss',
+          'doesn\'t discuss',
         ];
 
         const hasStrongNegative = strongNegativeIndicators.some((indicator) =>
           relevanceText.includes(indicator),
         );
+        
+        // When bet is selected, be stricter about negative indicators
+        if (betMarket && hasStrongNegative) {
+          isRelevant = false;
+        } else if (!betMarket) {
+          // For general portfolio news, only filter on strong negatives
+          isRelevant = isRelevant && !hasStrongNegative;
+        }
 
         return {
           article,
           enhancement,
-          isRelevant: isRelevant && !hasStrongNegative,
+          isRelevant,
+          betScore: enhancement.betRelevanceScore || 5,
         };
       })
       .filter(({ isRelevant }) => isRelevant) // Filter out irrelevant articles
+      // When bet is selected, sort by bet relevance score (highest first)
+      .sort((a, b) => betMarket ? (b.betScore - a.betScore) : 0)
       .map(({ article, enhancement }) => {
         // Format date - Yahoo Finance uses Unix timestamp (seconds or milliseconds)
         let publishTime: number;
@@ -604,28 +866,24 @@ export async function POST(request: NextRequest) {
         "All articles were filtered out, returning top 5 most recent articles",
       );
       articles = recentNews.slice(0, 5).map((article) => {
-        const publishTime =
-          article.providerPublishTime || article.pubDate || Date.now() / 1000;
-        const publishDate = new Date(
-          (publishTime > 1e12 ? publishTime / 1000 : publishTime) * 1000,
-        );
-        const formattedDate = publishDate.toISOString().split("T")[0];
-        const articleUrl =
-          article.link ||
-          article.url ||
-          `https://finance.yahoo.com/news/${article.uuid || ""}`;
-        const summary =
-          article.summary || article.description || article.excerpt || "";
-
+        const publishTime = article.providerPublishTime || article.pubDate || Date.now() / 1000;
+        const publishDate = new Date((publishTime > 1e12 ? publishTime / 1000 : publishTime) * 1000);
+        const formattedDate = publishDate.toISOString().split('T')[0];
+        const articleUrl = article.link || article.url || `https://finance.yahoo.com/news/${article.uuid || ''}`;
+        const summary = article.summary || article.description || article.excerpt || '';
+        
+        // Use bet subject for bet-specific articles, otherwise use ticker
+        const subject = article.isBetSpecific 
+          ? (article.betSubject || betSubjectForFallback || 'the bet topic')
+          : (article.relatedTicker || 'the market');
+        
         return {
           title: article.title || "Untitled Article",
-          summary:
-            summary ||
-            `News article about ${article.relatedTicker || "the market"}`,
+          summary: summary || `News article potentially related to ${subject}`,
           source: article.publisher || article.source || "Yahoo Finance",
           url: articleUrl,
           publishedAt: formattedDate,
-          relevance: `Recent news about ${article.relatedTicker || "the market"}`,
+          relevance: `Recent news potentially related to ${subject}. Assess relevance by reading the full article.`,
           relatedStocks: article.relatedTicker ? [article.relatedTicker] : [],
         };
       });

@@ -1,6 +1,6 @@
 "use client";
 
-import { HedgeCard } from "./HedgeCard";
+import { HedgeCard, type CorrelationInsight } from "./HedgeCard";
 import type { HedgeRecommendation, StockInfo } from "@/app/page";
 
 interface HedgeRecommendationsProps {
@@ -9,6 +9,7 @@ interface HedgeRecommendationsProps {
   stocksWithoutHedges?: string[];
   stockInfo?: Record<string, StockInfo>;
   onBetSelect?: (bet: HedgeRecommendation | null) => void;
+  correlationData?: Record<string, CorrelationInsight>;
 }
 
 export function HedgeRecommendations({
@@ -17,12 +18,21 @@ export function HedgeRecommendations({
   stocksWithoutHedges = [],
   stockInfo = {},
   onBetSelect,
+  correlationData = {},
 }: HedgeRecommendationsProps) {
-  // Recommendations should already be sorted by affected stocks count
-  // Just ensure they are
-  const sortedRecs = [...recommendations].sort(
-    (a, b) => b.affectedStocks.length - a.affectedStocks.length
-  );
+  // Sort by: 1) has historical data, 2) affected stocks count
+  const sortedRecs = [...recommendations].sort((a, b) => {
+    const aHasHistory = correlationData[a.market]?.hasHistoricalData ? 1 : 0;
+    const bHasHistory = correlationData[b.market]?.hasHistoricalData ? 1 : 0;
+    
+    // First sort by historical data
+    if (aHasHistory !== bHasHistory) {
+      return bHasHistory - aHasHistory;
+    }
+    
+    // Then by affected stocks count
+    return b.affectedStocks.length - a.affectedStocks.length;
+  });
 
   return (
     <div className="space-y-6">
@@ -46,6 +56,7 @@ export function HedgeRecommendations({
               recommendation={rec}
               stockInfo={stockInfo}
               onBetSelect={onBetSelect}
+              correlationInsight={correlationData[rec.market]}
             />
           ))}
         </div>

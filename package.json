@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "backfill": "npx tsx scripts/backfill-resolutions.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",

@@ -7,9 +7,9 @@ export interface HedgeRecommendation {
   reasoning: string;
   hedgesAgainst: string;
   suggestedAllocation: number;
-  affectedStocks: string[]; // All stocks this hedge affects
+  affectedStocks: string[]; 
   confidence: "high" | "medium";
-  endDate?: string; // ISO date string for market resolution
+  endDate?: string;
 }
 
 export interface AnalysisResponse {
